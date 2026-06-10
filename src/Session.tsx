@@ -96,9 +96,9 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
       interim_results: 'true',
       encoding: 'linear16',
       sample_rate: String(audioCtx.sampleRate),
-      access_token: token,
     })
-    const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`)
+    // temp JWTs are only accepted via the bearer subprotocol, not a query param
+    const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, ['bearer', token])
     wsRef.current = ws
 
     await audioCtx.audioWorklet.addModule('/pcm-worklet.js')

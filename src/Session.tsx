@@ -167,10 +167,25 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
 
   function stopCapturing() {
     cancelAnimationFrame(animFrameRef.current)
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'CloseStream' }))
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN) {
+      // Deepgram flushes any pending finals after CloseStream — drain them
+      // (persist only, no UI updates) instead of discarding by closing instantly.
+      ws.onmessage = (e: MessageEvent) => {
+        try {
+          const msg = JSON.parse(e.data)
+          const text: string = msg.channel?.alternatives?.[0]?.transcript || ''
+          if (msg.type === 'Results' && msg.is_final && text.trim()) {
+            saveTurns([{ negotiation_id: negotiationId, kind: 'transcript', content: text }]).catch(() => {})
+          }
+          if (msg.type === 'Metadata') ws.close(1000)
+        } catch {}
+      }
+      ws.send(JSON.stringify({ type: 'CloseStream' }))
+      setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(1000) }, 3000)
+    } else {
+      ws?.close(1000)
     }
-    wsRef.current?.close(1000)
     wsRef.current = null
     streamRef.current?.getTracks().forEach(t => t.stop())
     audioCtxRef.current?.close()

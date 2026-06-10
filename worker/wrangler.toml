@@ -1,0 +1,16 @@
+name = "negotiateai-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (set with `wrangler secret put <NAME>` — never commit, and CLI-set so a
+# later `wrangler deploy` does NOT wipe them; dashboard-set secrets get cleared on deploy):
+#   DATABASE_URL        Neon POOLED connection string (project winter-silence-68980700)
+#   APP_TOKEN           login PIN (the bearer the app sends)
+#   ANTHROPIC_API_KEY   Claude key (coaching cards)
+#   DEEPGRAM_API_KEY    Deepgram key (mints short-lived browser tokens via /dg-token)
+#
+# Optional (sane default in code):
+#   ANTHROPIC_MODEL     defaults to claude-haiku-4-5-20251001
+[vars]
+ALLOWED_ORIGINS = "https://negotiateai-mph.netlify.app,http://localhost:5173"

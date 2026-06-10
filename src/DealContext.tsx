@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { ChangeEvent } from 'react'
+import { createSession } from './lib/api'
 
 const FIELDS = [
   {
@@ -48,11 +49,25 @@ function load(): FormState {
 }
 
 interface Props {
-  onStart: () => void
+  onStart: (negotiationId: string, context: Record<string, string>) => void
 }
 
 export default function DealContext({ onStart }: Props) {
   const [form, setForm] = useState<FormState>(load)
+  const [starting, setStarting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleStart() {
+    setStarting(true)
+    setError('')
+    try {
+      const session = await createSession(form)
+      onStart(session.id, form)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start session')
+      setStarting(false)
+    }
+  }
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(form))
@@ -107,8 +122,8 @@ export default function DealContext({ onStart }: Props) {
         bottom: 0,
       }}>
         <button
-          onClick={onStart}
-          disabled={!canStart}
+          onClick={handleStart}
+          disabled={!canStart || starting}
           style={{
             width: '100%',
             background: canStart ? '#6366f1' : '#374151',
@@ -116,8 +131,13 @@ export default function DealContext({ onStart }: Props) {
             fontSize: '17px',
           }}
         >
-          Start Session
+          {starting ? 'Starting...' : 'Start Session'}
         </button>
+        {error && (
+          <p style={{ fontSize: '13px', color: '#f87171', textAlign: 'center', marginTop: '8px' }}>
+            {error}
+          </p>
+        )}
         {!canStart && (
           <p style={{ fontSize: '13px', color: '#9ca3af', textAlign: 'center', marginTop: '8px' }}>
             Fill in Counterparty profile and Hard lines to begin

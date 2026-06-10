@@ -1,14 +1,25 @@
 import { useState, useRef, useEffect } from 'react'
+import { getDeepgramToken, getCoachingCard, saveTurns, endSession } from './lib/api'
 
 interface Props {
+  negotiationId: string
+  dealContext: Record<string, string>
   onEnd: () => void
 }
 
-export default function Session({ onEnd }: Props) {
+interface TranscriptLine {
+  text: string
+  interim: boolean
+}
+
+const COACH_MIN_INTERVAL_MS = 6000
+const COACH_TAIL_LINES = 20
+
+export default function Session({ negotiationId, dealContext, onEnd }: Props) {
   const [sessionActive, setSessionActive] = useState(false)
   const [currentCard, setCurrentCard] = useState('')
   const [cardHeld, setCardHeld] = useState(false)
-  const [transcriptLog] = useState<string[]>([])
+  const [transcriptLog, setTranscriptLog] = useState<TranscriptLine[]>([])
   const [status, setStatus] = useState('Ready')
   const [audioLevel, setAudioLevel] = useState(0)
 
@@ -17,6 +28,11 @@ export default function Session({ onEnd }: Props) {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animFrameRef = useRef<number>(0)
+  const wsRef = useRef<WebSocket | null>(null)
+  const finalLinesRef = useRef<string[]>([])
+  const lastCoachAtRef = useRef(0)
+  const coachInFlightRef = useRef(false)
+  const cardHeldRef = useRef(false)
 
   useEffect(() => {
     if (transcriptRef.current) {
@@ -27,6 +43,80 @@ export default function Session({ onEnd }: Props) {
   useEffect(() => {
     return () => stopCapturing()
   }, [])
+
+  async function requestCoaching() {
+    const now = Date.now()
+    if (coachInFlightRef.current || now - lastCoachAtRef.current < COACH_MIN_INTERVAL_MS) return
+    coachInFlightRef.current = true
+    lastCoachAtRef.current = now
+    try {
+      const tail = finalLinesRef.current.slice(-COACH_TAIL_LINES).join('\n')
+      const card = await getCoachingCard(dealContext, tail)
+      if (card) {
+        if (!cardHeldRef.current) {
+          setCurrentCard(card)
+          setCardHeld(false)
+        }
+        saveTurns([{ negotiation_id: negotiationId, kind: 'coaching_card', content: card }]).catch(() => {})
+      }
+    } catch {
+      // coaching is best-effort; transcription keeps running
+    } finally {
+      coachInFlightRef.current = false
+    }
+  }
+
+  function handleDeepgramMessage(e: MessageEvent) {
+    let msg: any
+    try {
+      msg = JSON.parse(e.data)
+    } catch {
+      return
+    }
+    if (msg.type !== 'Results') return
+    const text: string = msg.channel?.alternatives?.[0]?.transcript || ''
+    if (!text.trim()) return
+
+    if (msg.is_final) {
+      finalLinesRef.current.push(text)
+      setTranscriptLog(prev => [...prev.filter(l => !l.interim), { text, interim: false }])
+      saveTurns([{ negotiation_id: negotiationId, kind: 'transcript', content: text }]).catch(() => {})
+      if (msg.speech_final) requestCoaching()
+    } else {
+      setTranscriptLog(prev => [...prev.filter(l => !l.interim), { text, interim: true }])
+    }
+  }
+
+  async function connectDeepgram(audioCtx: AudioContext, source: MediaStreamAudioSourceNode) {
+    const token = await getDeepgramToken()
+    const params = new URLSearchParams({
+      model: 'nova-2',
+      language: 'en',
+      punctuate: 'true',
+      interim_results: 'true',
+      encoding: 'linear16',
+      sample_rate: String(audioCtx.sampleRate),
+      access_token: token,
+    })
+    const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`)
+    wsRef.current = ws
+
+    await audioCtx.audioWorklet.addModule('/pcm-worklet.js')
+    const worklet = new AudioWorkletNode(audioCtx, 'pcm-worklet')
+    source.connect(worklet)
+    worklet.port.onmessage = (e) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(e.data)
+    }
+
+    ws.onopen = () => setStatus('Transcribing')
+    ws.onmessage = handleDeepgramMessage
+    ws.onerror = () => setStatus('Deepgram connection error')
+    ws.onclose = (e) => {
+      if (e.code !== 1000 && streamRef.current) {
+        setStatus(`Deepgram closed (${e.code})${e.reason ? `: ${e.reason}` : ''}`)
+      }
+    }
+  }
 
   async function startCapturing() {
     try {
@@ -68,6 +158,8 @@ export default function Session({ onEnd }: Props) {
 
       setSessionActive(true)
       setStatus('Capturing audio')
+
+      await connectDeepgram(audioCtx, source)
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : 'microphone unavailable'}`)
     }
@@ -75,6 +167,11 @@ export default function Session({ onEnd }: Props) {
 
   function stopCapturing() {
     cancelAnimationFrame(animFrameRef.current)
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'CloseStream' }))
+    }
+    wsRef.current?.close(1000)
+    wsRef.current = null
     streamRef.current?.getTracks().forEach(t => t.stop())
     audioCtxRef.current?.close()
     streamRef.current = null
@@ -85,15 +182,23 @@ export default function Session({ onEnd }: Props) {
     setStatus('Ready')
   }
 
+  function handleEnd() {
+    stopCapturing()
+    endSession(negotiationId).catch(() => {})
+    onEnd()
+  }
+
   const hasCard = currentCard.length > 0
 
   function handleDismiss() {
     setCurrentCard('')
     setCardHeld(false)
+    cardHeldRef.current = false
   }
 
   function handleHold() {
     setCardHeld(true)
+    cardHeldRef.current = true
   }
 
   return (
@@ -115,7 +220,7 @@ export default function Session({ onEnd }: Props) {
       }}>
         <span style={{ fontSize: '18px', fontWeight: 700, color: '#f3f4f6' }}>NegotiateAI</span>
         <button
-          onClick={onEnd}
+          onClick={handleEnd}
           style={{ background: '#374151', color: '#f3f4f6', fontSize: '14px', padding: '10px 16px', minHeight: '40px' }}
         >
           End Session
@@ -179,7 +284,12 @@ export default function Session({ onEnd }: Props) {
           </p>
         ) : (
           transcriptLog.map((line, i) => (
-            <p key={i} style={{ fontSize: '13px', color: '#d1d5db', marginBottom: '4px' }}>{line}</p>
+            <p key={i} style={{
+              fontSize: '13px',
+              color: line.interim ? '#6b7280' : '#d1d5db',
+              fontStyle: line.interim ? 'italic' : 'normal',
+              marginBottom: '4px',
+            }}>{line.text}</p>
           ))
         )}
       </div>

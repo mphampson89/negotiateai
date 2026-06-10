@@ -62,10 +62,13 @@ app.post('/dg-token', async (c) => {
 // ── Coaching card (Claude Haiku) ─────────────────────────────────────────────
 const COACH_SYSTEM = `You are a real-time negotiation coach. You receive the user's deal context and the live transcript of an ongoing negotiation. Respond with ONE short, punchy coaching card (max 2 sentences) ONLY when the latest exchange warrants it: a trigger pattern fired, a hard line is threatened, a tactic needs countering, or a clear opportunity appeared. Speak directly to the user ("Hold your number — that deadline is artificial."). If nothing actionable is happening, respond with exactly: PASS`
 
+const COACH_FORCED_SYSTEM = `You are a real-time negotiation coach. You receive the user's deal context and the live transcript of an ongoing negotiation. The user just tapped "Coach me" and wants guidance RIGHT NOW. Respond with ONE short, punchy coaching card (max 2 sentences) speaking directly to the user. If the transcript is thin or nothing tactical is happening, give your best strategic read against their deal context: leverage, recommended next move, or what to listen for. Always produce a card. Output only the card text itself — no headers, labels, or markdown formatting.`
+
 app.post('/coach', async (c) => {
-  const { context, transcript } = (await c.req.json()) as {
+  const { context, transcript, force } = (await c.req.json()) as {
     context: Record<string, string>
     transcript: string
+    force?: boolean
   }
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -77,11 +80,11 @@ app.post('/coach', async (c) => {
     body: JSON.stringify({
       model: c.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
       max_tokens: 150,
-      system: COACH_SYSTEM,
+      system: force ? COACH_FORCED_SYSTEM : COACH_SYSTEM,
       messages: [
         {
           role: 'user',
-          content: `DEAL CONTEXT:\n${JSON.stringify(context, null, 2)}\n\nLIVE TRANSCRIPT (most recent last):\n${transcript}`,
+          content: `DEAL CONTEXT:\n${JSON.stringify(context, null, 2)}\n\nLIVE TRANSCRIPT (most recent last):\n${transcript || '(no speech captured yet)'}`,
         },
       ],
     }),
@@ -93,6 +96,41 @@ app.post('/coach', async (c) => {
   const data = (await res.json()) as { content: { type: string; text?: string }[] }
   const text = (data.content?.[0]?.text || '').trim()
   return c.json({ card: !text || text === 'PASS' ? null : text })
+})
+
+// ── PDF text extraction (Claude document block — handles scanned PDFs too) ──
+app.post('/extract-text', async (c) => {
+  const { pdf_base64 } = (await c.req.json()) as { pdf_base64: string }
+  if (!pdf_base64) return c.json({ error: 'pdf_base64 required' }, 400)
+  // Anthropic caps PDF requests ~32MB; base64 inflates 4/3, so cap input ~8MB raw
+  if (pdf_base64.length > 12_000_000) return c.json({ error: 'PDF too large (8MB max)' }, 400)
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': c.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: c.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
+      max_tokens: 8192,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf_base64 } },
+            { type: 'text', text: 'Extract the full text of this document verbatim. Output only the document text, no commentary.' },
+          ],
+        },
+      ],
+    }),
+  })
+  if (!res.ok) {
+    console.error('extract-text failed', res.status, await res.text())
+    return c.json({ error: `Extraction failed (${res.status})` }, 502)
+  }
+  const data = (await res.json()) as { content: { type: string; text?: string }[] }
+  return c.json({ text: (data.content?.[0]?.text || '').trim() })
 })
 
 // ── Sessions ─────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
-import type { ChangeEvent } from 'react'
-import { createSession } from './lib/api'
+import { useState, useEffect, useRef } from 'react'
+import type { ChangeEvent, DragEvent } from 'react'
+import { createSession, extractPdfText } from './lib/api'
 
 const FIELDS = [
   {
@@ -81,6 +81,43 @@ export default function DealContext({ onStart }: Props) {
 
   const canStart = form.counterpartyProfile.trim().length > 0 && form.hardLines.trim().length > 0
 
+  const [dragOver, setDragOver] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importNote, setImportNote] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  async function importFiles(files: FileList | File[]) {
+    setImporting(true)
+    setImportNote('')
+    try {
+      const texts: string[] = []
+      for (const file of Array.from(files)) {
+        const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+        if (isPdf) {
+          setImportNote(`Extracting text from ${file.name}...`)
+          texts.push(`--- ${file.name} ---\n${await extractPdfText(file)}`)
+        } else {
+          texts.push(`--- ${file.name} ---\n${await file.text()}`)
+        }
+      }
+      setForm(prev => ({
+        ...prev,
+        documentText: [prev.documentText.trim(), ...texts].filter(Boolean).join('\n\n'),
+      }))
+      setImportNote(`Added ${files.length} file${files.length > 1 ? 's' : ''}`)
+    } catch (e) {
+      setImportNote(`Import failed: ${e instanceof Error ? e.message : 'unknown error'}`)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+    if (e.dataTransfer.files.length) importFiles(e.dataTransfer.files)
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
       <header style={{
@@ -102,14 +139,56 @@ export default function DealContext({ onStart }: Props) {
       <main style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {FIELDS.map(({ key, label, placeholder }) => (
           <div key={key}>
-            <label htmlFor={key}>{label}</label>
-            <textarea
-              id={key}
-              value={form[key]}
-              onChange={handleChange(key)}
-              placeholder={placeholder}
-              rows={4}
-            />
+            {key === 'documentText' ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label htmlFor={key}>{label}</label>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={importing}
+                    style={{ background: '#374151', color: '#f3f4f6', fontSize: '13px', padding: '6px 12px' }}
+                  >
+                    {importing ? 'Importing...' : 'Upload file'}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.txt,.md,.csv,text/plain,application/pdf"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={(e) => { if (e.target.files?.length) importFiles(e.target.files); e.target.value = '' }}
+                  />
+                </div>
+                <textarea
+                  id={key}
+                  value={form[key]}
+                  onChange={handleChange(key)}
+                  placeholder={placeholder + ' -- or drag a PDF / text file here'}
+                  rows={4}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleDrop}
+                  style={dragOver ? { borderColor: '#6366f1', background: '#1e1b4b' } : undefined}
+                />
+                {importNote && (
+                  <p style={{ fontSize: '12px', color: importNote.startsWith('Import failed') ? '#f87171' : '#9ca3af', marginTop: '4px' }}>
+                    {importNote}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <label htmlFor={key}>{label}</label>
+                <textarea
+                  id={key}
+                  value={form[key]}
+                  onChange={handleChange(key)}
+                  placeholder={placeholder}
+                  rows={4}
+                />
+              </>
+            )}
           </div>
         ))}
       </main>

@@ -22,6 +22,7 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
   const [transcriptLog, setTranscriptLog] = useState<TranscriptLine[]>([])
   const [status, setStatus] = useState('Ready')
   const [audioLevel, setAudioLevel] = useState(0)
+  const [coachPending, setCoachPending] = useState(false)
 
   const transcriptRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -44,18 +45,21 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
     return () => stopCapturing()
   }, [])
 
-  async function requestCoaching() {
+  async function requestCoaching(force = false) {
     const now = Date.now()
-    if (coachInFlightRef.current || now - lastCoachAtRef.current < COACH_MIN_INTERVAL_MS) return
+    if (coachInFlightRef.current) return
+    if (!force && now - lastCoachAtRef.current < COACH_MIN_INTERVAL_MS) return
     coachInFlightRef.current = true
     lastCoachAtRef.current = now
+    if (force) setCoachPending(true)
     try {
       const tail = finalLinesRef.current.slice(-COACH_TAIL_LINES).join('\n')
-      const card = await getCoachingCard(dealContext, tail)
+      const card = await getCoachingCard(dealContext, tail, force)
       if (card) {
-        if (!cardHeldRef.current) {
+        if (force || !cardHeldRef.current) {
           setCurrentCard(card)
           setCardHeld(false)
+          cardHeldRef.current = false
         }
         saveTurns([{ negotiation_id: negotiationId, kind: 'coaching_card', content: card }]).catch(() => {})
       }
@@ -63,6 +67,7 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
       // coaching is best-effort; transcription keeps running
     } finally {
       coachInFlightRef.current = false
+      setCoachPending(false)
     }
   }
 
@@ -284,6 +289,13 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
             style={{ flex: 1, background: '#374151', color: '#f3f4f6', fontSize: '18px', padding: '16px' }}
           >
             Dismiss
+          </button>
+          <button
+            onClick={() => requestCoaching(true)}
+            disabled={coachPending}
+            style={{ flex: 1, background: coachPending ? '#374151' : '#6366f1', color: '#fff', fontSize: '18px', padding: '16px' }}
+          >
+            {coachPending ? 'Thinking...' : 'Coach me'}
           </button>
         </div>
       </div>

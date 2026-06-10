@@ -85,10 +85,25 @@ export async function getDeepgramToken(): Promise<string> {
 export async function getCoachingCard(
   context: Record<string, string>,
   transcript: string,
+  force = false,
 ): Promise<string | null> {
   const { card } = await call<{ card: string | null }>('/coach', {
     method: 'POST',
-    body: JSON.stringify({ context, transcript }),
+    body: JSON.stringify({ context, transcript, force }),
   })
   return card
+}
+
+export async function extractPdfText(file: File): Promise<string> {
+  const buf = await file.arrayBuffer()
+  let binary = ''
+  const bytes = new Uint8Array(buf)
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  const { text } = await call<{ text: string }>('/extract-text', {
+    method: 'POST',
+    body: JSON.stringify({ pdf_base64: btoa(binary) }),
+  })
+  return text
 }

@@ -50,9 +50,10 @@ function load(): FormState {
 
 interface Props {
   onStart: (negotiationId: string, context: Record<string, string>) => void
+  onHistory: () => void
 }
 
-export default function DealContext({ onStart }: Props) {
+export default function DealContext({ onStart, onHistory }: Props) {
   const [form, setForm] = useState<FormState>(load)
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState('')
@@ -127,13 +128,26 @@ export default function DealContext({ onStart }: Props) {
         position: 'sticky',
         top: 0,
         zIndex: 10,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: '12px',
       }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 700, color: '#f3f4f6', letterSpacing: '-0.3px' }}>
-          NegotiateAI
-        </h1>
-        <p style={{ fontSize: '13px', color: '#9ca3af', marginTop: '2px' }}>
-          Enter deal context before your session
-        </p>
+        <div>
+          <h1 style={{ fontSize: '20px', fontWeight: 700, color: '#f3f4f6', letterSpacing: '-0.3px' }}>
+            NegotiateAI
+          </h1>
+          <p style={{ fontSize: '13px', color: '#9ca3af', marginTop: '2px' }}>
+            Enter deal context before your session
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onHistory}
+          style={{ background: '#374151', color: '#f3f4f6', fontSize: '13px', padding: '8px 14px', minHeight: '40px', flexShrink: 0 }}
+        >
+          History
+        </button>
       </header>
 
       <main style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>

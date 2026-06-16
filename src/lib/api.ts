@@ -64,10 +64,33 @@ export async function endSession(id: string): Promise<void> {
   await call(`/sessions/${id}/end`, { method: 'PATCH' })
 }
 
+export interface HistoryTurn {
+  id: string
+  kind: 'transcript' | 'coaching_card' | 'note'
+  speaker: string | null
+  content: string
+  occurred_at: string
+}
+
+export async function listSessions(): Promise<Negotiation[]> {
+  const { data } = await call<{ data: Negotiation[] }>('/sessions')
+  return data
+}
+
+export async function getSession(
+  id: string,
+): Promise<{ negotiation: Negotiation; turns: HistoryTurn[] }> {
+  const { data } = await call<{ data: { negotiation: Negotiation; turns: HistoryTurn[] } }>(
+    `/sessions/${id}`,
+  )
+  return data
+}
+
 export interface Turn {
   negotiation_id: string
   kind: 'transcript' | 'coaching_card' | 'note'
-  speaker?: 'me' | 'counterparty'
+  // Diarization speaker index as a string ("0", "1", …); null/absent when unknown.
+  speaker?: string
   content: string
   is_interim?: boolean
 }

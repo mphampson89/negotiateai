@@ -155,6 +155,26 @@ app.patch('/sessions/:id/end', async (c) => {
   return c.json({ data: rows[0] })
 })
 
+// List past negotiations, newest first (for the History screen).
+app.get('/sessions', async (c) => {
+  const rows = await db(c)(
+    'select id, title, context, started_at, ended_at from negotiations order by started_at desc',
+  )
+  return c.json({ data: rows })
+})
+
+// One negotiation with all its turns in chronological order.
+app.get('/sessions/:id', async (c) => {
+  const id = c.req.param('id')
+  const neg = await db(c)('select * from negotiations where id = $1', [id])
+  if (!neg.length) return c.json({ error: 'Not found' }, 404)
+  const turns = await db(c)(
+    'select id, kind, speaker, content, occurred_at from negotiation_turns where negotiation_id = $1 order by occurred_at asc, id asc',
+    [id],
+  )
+  return c.json({ data: { negotiation: neg[0], turns } })
+})
+
 // ── Turns (single or batch) ──────────────────────────────────────────────────
 const TURN_KINDS = new Set(['transcript', 'coaching_card', 'note'])
 

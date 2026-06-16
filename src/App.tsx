@@ -3,9 +3,10 @@ import './App.css'
 import DealContext from './DealContext'
 import Session from './Session'
 import Pin from './Pin'
+import History from './History'
 import { getToken, checkAuth } from './lib/api'
 
-type Screen = 'pin' | 'deal-context' | 'session'
+type Screen = 'pin' | 'deal-context' | 'session' | 'history'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('pin')
@@ -30,7 +31,11 @@ function App() {
             setDealContext(context)
             setScreen('session')
           }}
+          onHistory={() => setScreen('history')}
         />
+      )}
+      {screen === 'history' && (
+        <History onBack={() => setScreen('deal-context')} />
       )}
       {screen === 'session' && (
         <Session

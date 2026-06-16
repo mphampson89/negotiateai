@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { getDeepgramToken, getCoachingCard, saveTurns, endSession } from './lib/api'
+import { segmentBySpeaker, speakerColor, speakerLabel } from './lib/diarize'
 
 interface Props {
   negotiationId: string
@@ -10,6 +11,7 @@ interface Props {
 interface TranscriptLine {
   text: string
   interim: boolean
+  speaker?: number | null
 }
 
 const COACH_MIN_INTERVAL_MS = 6000
@@ -71,6 +73,28 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
     }
   }
 
+  type Segment = { speaker: number | null; text: string }
+
+  // Diarized words → speaker runs; falls back to the flat transcript (speaker unknown)
+  // when a short final carries no per-word speaker data.
+  function segmentsFromAlt(alt: any): Segment[] {
+    const text: string = alt?.transcript || ''
+    const words = alt?.words ?? []
+    if (words.length) return segmentBySpeaker(words)
+    return text.trim() ? [{ speaker: null, text }] : []
+  }
+
+  function persistSegments(segments: Segment[]) {
+    saveTurns(
+      segments.map(seg => ({
+        negotiation_id: negotiationId,
+        kind: 'transcript' as const,
+        speaker: seg.speaker == null ? undefined : String(seg.speaker),
+        content: seg.text,
+      })),
+    ).catch(() => {})
+  }
+
   function handleDeepgramMessage(e: MessageEvent) {
     let msg: any
     try {
@@ -79,13 +103,21 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
       return
     }
     if (msg.type !== 'Results') return
-    const text: string = msg.channel?.alternatives?.[0]?.transcript || ''
+    const alt = msg.channel?.alternatives?.[0]
+    const text: string = alt?.transcript || ''
     if (!text.trim()) return
 
     if (msg.is_final) {
-      finalLinesRef.current.push(text)
-      setTranscriptLog(prev => [...prev.filter(l => !l.interim), { text, interim: false }])
-      saveTurns([{ negotiation_id: negotiationId, kind: 'transcript', content: text }]).catch(() => {})
+      const segments = segmentsFromAlt(alt)
+      if (!segments.length) return
+      for (const seg of segments) {
+        finalLinesRef.current.push(seg.speaker == null ? seg.text : `${speakerLabel(seg.speaker)}: ${seg.text}`)
+      }
+      setTranscriptLog(prev => [
+        ...prev.filter(l => !l.interim),
+        ...segments.map(seg => ({ text: seg.text, interim: false, speaker: seg.speaker })),
+      ])
+      persistSegments(segments)
       if (msg.speech_final) requestCoaching()
     } else {
       setTranscriptLog(prev => [...prev.filter(l => !l.interim), { text, interim: true }])
@@ -98,6 +130,7 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
       model: 'nova-2',
       language: 'en',
       punctuate: 'true',
+      diarize: 'true',
       interim_results: 'true',
       encoding: 'linear16',
       sample_rate: String(audioCtx.sampleRate),
@@ -179,9 +212,8 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
       ws.onmessage = (e: MessageEvent) => {
         try {
           const msg = JSON.parse(e.data)
-          const text: string = msg.channel?.alternatives?.[0]?.transcript || ''
-          if (msg.type === 'Results' && msg.is_final && text.trim()) {
-            saveTurns([{ negotiation_id: negotiationId, kind: 'transcript', content: text }]).catch(() => {})
+          if (msg.type === 'Results' && msg.is_final) {
+            persistSegments(segmentsFromAlt(msg.channel?.alternatives?.[0]))
           }
           if (msg.type === 'Metadata') ws.close(1000)
         } catch {}
@@ -313,10 +345,15 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
           transcriptLog.map((line, i) => (
             <p key={i} style={{
               fontSize: '13px',
-              color: line.interim ? '#6b7280' : '#d1d5db',
+              color: line.interim ? '#6b7280' : (typeof line.speaker === 'number' ? speakerColor(line.speaker) : '#d1d5db'),
               fontStyle: line.interim ? 'italic' : 'normal',
               marginBottom: '4px',
-            }}>{line.text}</p>
+            }}>
+              {typeof line.speaker === 'number' && (
+                <strong style={{ marginRight: '6px' }}>{speakerLabel(line.speaker)}</strong>
+              )}
+              {line.text}
+            </p>
           ))
         )}
       </div>

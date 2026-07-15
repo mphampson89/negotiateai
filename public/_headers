@@ -1,0 +1,2 @@
+/*
+  Content-Security-Policy: frame-ancestors 'self' https://bridge-mph.netlify.app https://cockpit-shell--bridge-mph.netlify.app

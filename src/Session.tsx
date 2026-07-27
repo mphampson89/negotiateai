@@ -201,6 +201,12 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
 
       await connectDeepgram(audioCtx, source)
     } catch (err) {
+      // The mic is genuinely live by this point (getUserMedia already resolved), so a failure
+      // in connectDeepgram used to leave the tracks open with the UI showing only an error
+      // string — and, since the recording emit, a shell badge stuck reporting a live mic.
+      // stopCapturing() is null-safe at every stage and emits active:false; run it before
+      // overwriting the status it sets.
+      stopCapturing()
       setStatus(`Error: ${err instanceof Error ? err.message : 'microphone unavailable'}`)
     }
   }

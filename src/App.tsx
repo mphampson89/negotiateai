@@ -4,7 +4,7 @@ import DealContext from './DealContext'
 import Session from './Session'
 import Pin from './Pin'
 import History from './History'
-import { getToken, setToken, checkAuth } from './lib/api'
+import { getToken, setToken, clearToken, checkAuth } from './lib/api'
 import { MY_APP_ID, pickTrustedParent, validateUnlock } from './lib/bridgeUnlock'
 
 type Screen = 'pin' | 'deal-context' | 'session' | 'history'
@@ -40,6 +40,10 @@ function App() {
         setToken(verdict.credential!)     // overwrite any stored/assistant token with the owner credential
         ok = await checkAuth()
         if (ok) setScreen('deal-context')
+        // A rejected credential must not stay on disk: without this, a bad unlock clobbers a
+        // working standalone token and locks the app out of its own origin. (Ledger already
+        // does this; we were the odd one out.)
+        else clearToken()
       } finally {
         inFlight = false
         window.parent.postMessage(

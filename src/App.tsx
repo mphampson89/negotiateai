@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import DealContext from './DealContext'
 import Session from './Session'
 import Pin from './Pin'
 import History from './History'
-import { getToken, checkAuth } from './lib/api'
+import { getToken, setToken, checkAuth } from './lib/api'
+import { MY_APP_ID, pickTrustedParent, validateUnlock } from './lib/bridgeUnlock'
 
 type Screen = 'pin' | 'deal-context' | 'session' | 'history'
 
@@ -14,9 +15,45 @@ function App() {
   const [dealContext, setDealContext] = useState<Record<string, string>>({})
 
   useEffect(() => {
+    // Framed under Bridge: ignore the partitioned stored token; the handshake authenticates (§6.3).
+    if (window.parent !== window) return
     if (getToken()) {
       checkAuth().then((ok) => ok && setScreen('deal-context'))
     }
+  }, [])
+
+  const readySentRef = useRef(false)
+  useEffect(() => {
+    if (window.parent === window) return
+    const parentOrigin = pickTrustedParent()
+    if (!parentOrigin) return
+    let inFlight = false
+    const onMessage = async (ev: MessageEvent) => {
+      const verdict = validateUnlock(
+        { origin: ev.origin, source: ev.source, data: ev.data },
+        { parentOrigin, parentWindow: window.parent },
+      )
+      if (!verdict.ok || inFlight) return
+      inFlight = true
+      let ok = false
+      try {
+        setToken(verdict.credential!)     // overwrite any stored/assistant token with the owner credential
+        ok = await checkAuth()
+        if (ok) setScreen('deal-context')
+      } finally {
+        inFlight = false
+        window.parent.postMessage(
+          { type: 'bridge.unlock.ack', v: 1, app: MY_APP_ID, reqId: verdict.reqId, ok },
+          parentOrigin,
+        )
+      }
+    }
+    window.addEventListener('message', onMessage)
+    if (!readySentRef.current) {
+      readySentRef.current = true
+      window.parent.postMessage({ type: 'bridge.unlock.ready', v: 1, app: MY_APP_ID }, parentOrigin)
+    }
+    return () => window.removeEventListener('message', onMessage)
   }, [])
 
   return (

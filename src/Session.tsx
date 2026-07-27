@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { getDeepgramToken, getCoachingCard, saveTurns, endSession } from './lib/api'
 import { segmentBySpeaker, speakerColor, speakerLabel } from './lib/diarize'
+import { emitRecording } from './lib/bridgeUnlock'
 
 interface Props {
   negotiationId: string
@@ -196,6 +197,7 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
 
       setSessionActive(true)
       setStatus('Capturing audio')
+      emitRecording(true) // shell recording badge on (§6.10)
 
       await connectDeepgram(audioCtx, source)
     } catch (err) {
@@ -232,6 +234,7 @@ export default function Session({ negotiationId, dealContext, onEnd }: Props) {
     setAudioLevel(0)
     setSessionActive(false)
     setStatus('Ready')
+    emitRecording(false) // shell recording badge off (§6.10)
   }
 
   function handleEnd() {

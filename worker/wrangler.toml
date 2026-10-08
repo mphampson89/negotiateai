@@ -11,6 +11,6 @@ compatibility_flags = ["nodejs_compat"]
 #   DEEPGRAM_API_KEY    Deepgram key (mints short-lived browser tokens via /dg-token)
 #
 # Optional (sane default in code):
-#   ANTHROPIC_MODEL     defaults to claude-haiku-4-5-20251001
+#   ANTHROPIC_MODEL     defaults to claude-haiku-5-5
 [vars]
 ALLOWED_ORIGINS = "https://negotiateai-mph.netlify.app,http://localhost:5173"

@@ -59,6 +59,12 @@ app.post('/dg-token', async (c) => {
   return c.json(await res.json())
 })
 
+// 5.5 models can think first and can decline with HTTP 200 + stop_reason "refusal":
+// return the first text block, or null when the reply was a refusal.
+type ClaudeReply = { stop_reason?: string; content?: { type: string; text?: string }[] }
+const replyText = (d: ClaudeReply) =>
+  d.stop_reason === 'refusal' ? null : (d.content?.find((b) => b.type === 'text')?.text ?? '').trim()
+
 // ── Coaching card (Claude Haiku) ─────────────────────────────────────────────
 const COACH_SYSTEM = `You are a real-time negotiation coach. You receive the user's deal context and the live transcript of an ongoing negotiation. Respond with ONE short, punchy coaching card (max 2 sentences) ONLY when the latest exchange warrants it: a trigger pattern fired, a hard line is threatened, a tactic needs countering, or a clear opportunity appeared. Speak directly to the user ("Hold your number — that deadline is artificial."). If nothing actionable is happening, respond with exactly: PASS`
 
@@ -78,8 +84,9 @@ app.post('/coach', async (c) => {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: c.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
-      max_tokens: 150,
+      model: c.env.ANTHROPIC_MODEL || 'claude-haiku-5-5',
+      max_tokens: 1024,
+      output_config: { effort: 'low' },
       system: force ? COACH_FORCED_SYSTEM : COACH_SYSTEM,
       messages: [
         {
@@ -93,8 +100,11 @@ app.post('/coach', async (c) => {
     console.error('anthropic failed', res.status, await res.text())
     return c.json({ error: `Coach call failed (${res.status})` }, 502)
   }
-  const data = (await res.json()) as { content: { type: string; text?: string }[] }
-  const text = (data.content?.[0]?.text || '').trim()
+  const text = replyText((await res.json()) as ClaudeReply)
+  if (text === null) {
+    console.error('anthropic refused coach request')
+    return c.json({ error: 'Coach call failed (refusal)' }, 502)
+  }
   return c.json({ card: !text || text === 'PASS' ? null : text })
 })
 
@@ -112,8 +122,9 @@ app.post('/extract-text', async (c) => {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: c.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
+      model: c.env.ANTHROPIC_MODEL || 'claude-haiku-5-5',
       max_tokens: 8192,
+      output_config: { effort: 'low' },
       messages: [
         {
           role: 'user',
@@ -129,8 +140,12 @@ app.post('/extract-text', async (c) => {
     console.error('extract-text failed', res.status, await res.text())
     return c.json({ error: `Extraction failed (${res.status})` }, 502)
   }
-  const data = (await res.json()) as { content: { type: string; text?: string }[] }
-  return c.json({ text: (data.content?.[0]?.text || '').trim() })
+  const text = replyText((await res.json()) as ClaudeReply)
+  if (text === null) {
+    console.error('extract-text refused')
+    return c.json({ error: 'Extraction failed (refusal)' }, 502)
+  }
+  return c.json({ text })
 })
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
